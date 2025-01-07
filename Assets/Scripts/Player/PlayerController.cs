@@ -1,4 +1,5 @@
 using Cysharp.Threading.Tasks;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using Unity.VisualScripting;
@@ -7,8 +8,11 @@ using UnityEngine.InputSystem;
 
 public class PlayerController : Player
 {
+    public static event Action OnPlayerMove, OnPlayerFall;
+    public static event Action<Vector3, int> OnPlayerFlip;
+
     private PlayerInputAction input;
-    public Rigidbody2D playerRb;
+    private Rigidbody2D playerRb;
 
     private Vector2 platformVelocity;
 
@@ -19,13 +23,24 @@ public class PlayerController : Player
     private int initialDirection;
     private float deadTime = 1f;
 
+    private bool prevIsOnGround = true, isOnGround = true;
+    [SerializeField] private Transform groundCheck;
+    private float groundCheckRadius = 0.02f;
+    [SerializeField] private LayerMask groundLayer;
+
     private bool movePressed = false;
     private int direction;
     private float targetSpeed;
 
     private float speedMultiplier = 0f;
     //private float wallCheckRange = 0.1f;
+    private float counter = 0f;
+
     [SerializeField] private LayerMask hitLayer;
+    
+    [SerializeField] private float thresholdVelocity;
+
+    [SerializeField] private float thresholdAmoutMoveParticle;
 
     private void Awake()
     {
@@ -81,14 +96,14 @@ public class PlayerController : Player
 
     private void OnObserverLandEnter(NormalPlatform platform)
     {
-        Debug.Log("Enter");
+        //Debug.Log("Enter");
         platformVelocity = new Vector2(platform.speed, platform.platformRb.velocity.y);
         playerRb.gravityScale = weightGravity;
     }
 
     private void OnObserverLandExit(NormalPlatform platform)
     {
-        Debug.Log("Exit");
+        //Debug.Log("Exit");
         platformVelocity = Vector2.zero;
         playerRb.gravityScale = initialGravity;
     }
@@ -98,8 +113,14 @@ public class PlayerController : Player
         Die();
     }
 
+    private void Update()
+    {
+        CheckVelocity();
+    }
+
     private void FixedUpdate()
     {
+        CheckGround();
         UpdateSpeedMultiplier();
         if (speedMultiplier != 0f)
         {
@@ -110,6 +131,29 @@ public class PlayerController : Player
     private void Move()
     {
         playerRb.velocity = new Vector2(direction * speed * speedMultiplier, playerRb.velocity.y) + platformVelocity;
+    }
+
+    private void CheckVelocity()
+    {
+        counter += Time.deltaTime;
+        if (Mathf.Abs(playerRb.velocity.x) > thresholdVelocity)
+        {
+            if (counter > thresholdAmoutMoveParticle && isOnGround)
+            {
+                OnPlayerMove?.Invoke();
+                counter = 0;
+            }
+        }
+    }
+
+    private void CheckGround()
+    {
+        isOnGround = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
+        if (isOnGround == true && prevIsOnGround == false)
+        {
+            OnPlayerFall?.Invoke();
+        }
+        prevIsOnGround = isOnGround;
     }
 
     private void UpdateSpeedMultiplier()
@@ -149,8 +193,9 @@ public class PlayerController : Player
 
     private void OnTriggerEnter2D(Collider2D collision)
     {
-        if (collision.CompareTag("Wall"))
+        if (collision.CompareTag("Wall") || collision.CompareTag("Ground"))
         {
+            OnPlayerFlip?.Invoke(transform.position, direction);
             Flip();
         }
     }
