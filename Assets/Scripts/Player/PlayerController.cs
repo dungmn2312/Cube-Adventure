@@ -1,4 +1,5 @@
 using Cysharp.Threading.Tasks;
+using DG.Tweening;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -10,9 +11,13 @@ public class PlayerController : Player
 {
     public static event Action OnPlayerMove, OnPlayerFall;
     public static event Action<Vector3, int> OnPlayerFlip;
+    public static event Action<Vector3> OnPlayerDie;
 
     private PlayerInputAction input;
     private Rigidbody2D playerRb;
+
+    private Animator animator;
+    private int animInTeleport, animOutTeleport;
 
     private Vector2 platformVelocity;
 
@@ -21,7 +26,9 @@ public class PlayerController : Player
     private float initialGravity;
     private Vector3 initialPos;
     private int initialDirection;
-    private float deadTime = 1f;
+    private float deadTime = 1.5f;
+
+    private bool readyTele = true;
 
     private bool prevIsOnGround = true, isOnGround = true;
     [SerializeField] private Transform groundCheck;
@@ -31,6 +38,8 @@ public class PlayerController : Player
     private bool movePressed = false;
     private int direction;
     private float targetSpeed;
+
+    private float teleDuration = 1f;
 
     private float speedMultiplier = 0f;
     //private float wallCheckRange = 0.1f;
@@ -47,6 +56,8 @@ public class PlayerController : Player
         input = new PlayerInputAction();
 
         playerRb = GetComponent<Rigidbody2D>();
+
+        animator = GetComponent<Animator>();
     }
 
     private void OnEnable()
@@ -71,6 +82,8 @@ public class PlayerController : Player
         NormalPlatform.OnLandExit += OnObserverLandExit;
 
         ObstacleController.OnDamagePlayer += OnObserverDamagePlayer;
+
+        //TeleportController.OnInTeleport += OnObserverInTeleport;
     }
 
     private void Start()
@@ -82,6 +95,9 @@ public class PlayerController : Player
         initialPos = transform.position;
         initialDirection = direction;
         initialGravity = playerRb.gravityScale;
+
+        animInTeleport = Animator.StringToHash("in_teleport");
+        animOutTeleport = Animator.StringToHash("out_teleport");
     }
 
     private void OnMove(InputAction.CallbackContext ctx)
@@ -96,14 +112,14 @@ public class PlayerController : Player
 
     private void OnObserverLandEnter(NormalPlatform platform)
     {
-        //Debug.Log("Enter");
+        Debug.Log("Enter");
         platformVelocity = new Vector2(platform.speed, platform.platformRb.velocity.y);
         playerRb.gravityScale = weightGravity;
     }
 
     private void OnObserverLandExit(NormalPlatform platform)
     {
-        //Debug.Log("Exit");
+        Debug.Log("Exit");
         platformVelocity = Vector2.zero;
         playerRb.gravityScale = initialGravity;
     }
@@ -112,6 +128,20 @@ public class PlayerController : Player
     {
         Die();
     }
+
+    //private void OnObserverInTeleport(Vector3 gateA, Vector3 gateB)
+    //{
+    //    PlayerAnimationController.Instance.PlayAnimInTeleport();
+    //    transform.DOMove(gateA, teleDuration)
+    //        .SetEase(Ease.Linear);
+    //        //.OnComplete(() =>
+    //        //{
+    //        //    transform.position = gateB;
+    //        //    PlayerAnimationController.Instance.PlayAnimOutTeleport();
+    //        //    transform.DOMove(gateB + new Vector3(di, 0, 0), teleDuration)
+    //        //        .SetEase(Ease.Linear);
+    //        //});
+    //}
 
     private void Update()
     {
@@ -125,6 +155,10 @@ public class PlayerController : Player
         if (speedMultiplier != 0f)
         {
             Move();
+        }
+        else
+        {
+            if (playerRb.velocity.x != 0f && !isOnGround) playerRb.velocity = new Vector2(0f, playerRb.velocity.y);
         }
     }
 
@@ -178,6 +212,7 @@ public class PlayerController : Player
 
     private async void Die()
     {
+        OnPlayerDie?.Invoke(transform.position);
         gameObject.SetActive(false);
         speedMultiplier = 0f;
         transform.position = initialPos;
@@ -193,11 +228,42 @@ public class PlayerController : Player
 
     private void OnTriggerEnter2D(Collider2D collision)
     {
-        if (collision.CompareTag("Wall") || collision.CompareTag("Ground"))
+        if (collision.CompareTag("Wall"))
         {
             OnPlayerFlip?.Invoke(transform.position, direction);
             Flip();
         }
+        if (collision.CompareTag("Teleport") && readyTele)
+        {
+            input.Disable();
+            playerRb.velocity = Vector3.zero;
+            readyTele = false;
+
+            GameObject teleportIn = collision.gameObject;
+            Transform teleportOut = teleportIn.GetComponent<TeleportController>().otherGate;
+            EntryTeleport(teleportIn.transform, teleportOut.transform);
+        }
+    }
+
+    private void EntryTeleport(Transform teleportIn, Transform teleportOut)
+    {
+        animator.SetTrigger(animInTeleport);
+        transform.DOMove(teleportIn.position, teleDuration)
+            .SetEase(Ease.Linear)
+            .OnComplete(() =>
+            {
+                Debug.Log(teleportOut.right.normalized.x);
+                animator.SetTrigger(animOutTeleport);
+                if (direction * teleportOut.right.normalized.x < 0)    Flip();
+                transform.position = teleportOut.position;
+                transform.DOMove(teleportOut.position + new Vector3(teleportOut.right.normalized.x, 0, 0), teleDuration)
+                    .SetEase(Ease.Linear)
+                    .OnComplete(() =>
+                    {
+                        readyTele = true;
+                        input.Enable();
+                    });
+            });
     }
 
     //private bool CheckWallTouch()
